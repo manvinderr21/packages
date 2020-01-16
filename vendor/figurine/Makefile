@@ -12,6 +12,8 @@ export APKBUILD_DEPENDS += libc6-compat
 install:
 	$(call download_tarball)
 
+package/prepare::
+	mv src/deploy/$(PACKAGE_EXE) src
+
 test:
 	$(PACKAGE_EXE) --help
-

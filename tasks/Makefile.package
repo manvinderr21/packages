@@ -5,10 +5,12 @@ export OS_ARCH ?= $(shell uname -m)
 export INSTALL_PATH ?= /usr/local/bin
 export CURL ?= curl --retry 3 --retry-delay 5 --fail -sSL
 export PATH := $(PATH):../../bin/
+export SHELL := /bin/bash
 
 export TMP ?= /tmp
 
 # Package details
+export PACKAGE_ENABLED ?= true
 export PACKAGE_NAME ?= $(notdir $(CURDIR))
 export PACKAGE_REPO_NAME ?= $(PACKAGE_NAME)
 export PACKAGE_EXE ?= $(PACKAGE_NAME)
@@ -19,6 +21,8 @@ export PACKAGE_LICENSE ?= $(shell cat LICENSE 2>/dev/null)
 export PACKAGE_HOMEPAGE_URL ?= https://github.com/$(VENDOR)/$(PACKAGE)
 export PACKAGE_REPO_URL ?= https://github.com/$(VENDOR)/$(PACKAGE_REPO_NAME)
 
+export AUTO_UPDATE_ENABLED ?= true
+
 # Permit version to be overridden on the command line using PACKAGE_VERSION (e.g. FIGURINE_VERSION=0.3.0)
 VERSION_ENV = $(shell basename $$(pwd) | tr '[:lower:]' '[:upper:]')_VERSION
 ifneq ($($(VERSION_ENV)),) 
@@ -27,19 +31,24 @@ endif
 
 # Macros to download a binary release from GitHub and install it
 # $(call github_download_binary_release,version,repo,asset)
-download_binary = $(CURL) -o $(INSTALL_PATH)/$(PACKAGE_NAME) $(DOWNLOAD_URL) && chmod +x $(INSTALL_PATH)/$(PACKAGE_NAME)
+define download_binary
+	mkdir -p $(INSTALL_PATH)
+	$(CURL) -o $(INSTALL_PATH)/$(PACKAGE_NAME) $(DOWNLOAD_URL) && chmod +x $(INSTALL_PATH)/$(PACKAGE_NAME)
+endef
 
 define download_binary_gz
+	mkdir -p $(INSTALL_PATH)
 	$(CURL) -o $(INSTALL_PATH)/$(PACKAGE_NAME).gz $(DOWNLOAD_URL)
 	gunzip -f -k -q $(INSTALL_PATH)/$(PACKAGE_NAME).gz
 	chmod +x $(INSTALL_PATH)/$(PACKAGE_NAME)
+	rm -f $(INSTALL_PATH)/$(PACKAGE_NAME).gz
 endef
 
 define download_tarball
 	[ -n "$(TMP)" ] && [ -n "$(PACKAGE_NAME)" ] && rm -rf "$(TMP)/$(PACKAGE_NAME)"
 	mkdir -p $(TMP)/$(PACKAGE_NAME)
-	$(CURL) -o - $(DOWNLOAD_URL) | tar -zx -C $(TMP)/$(PACKAGE_NAME)
-	find $(TMP)/$(PACKAGE_NAME) -type f -name $(PACKAGE_NAME) | xargs -I {} cp -f {} $(INSTALL_PATH)/$(PACKAGE_NAME)
+	$(CURL) -o - $(DOWNLOAD_URL) | tar -zx -C '$(TMP)/$(PACKAGE_NAME)'
+	find $(TMP)/$(PACKAGE_NAME) -type f -name '$(PACKAGE_NAME)*' | xargs -I {} cp -f {} $(INSTALL_PATH)/$(PACKAGE_NAME)
 	chmod +x $(INSTALL_PATH)/$(PACKAGE_NAME)
 	[ -n "$(TMP)" ] && [ -n "$(PACKAGE_NAME)" ] && rm -rf "$(TMP)/$(PACKAGE_NAME)"
 endef
@@ -87,8 +96,19 @@ default: info
 DESCRIPTION:
 	@github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) "index" .description | tee DESCRIPTION
 
+VERSION: API=releases/latest
+VERSION: QUERY=.tag_name
 VERSION:
-	@github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) "releases/latest" .tag_name | sed 's/^v//' | tee VERSION
+	@version=$$(github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) '$(API)' '$(QUERY)' | sed 's/^v//' | tr -d '\n'); \
+	if [ $$? -ne 0 ]; then \
+		exit 1; \
+	fi; \
+	if [ "$${version}" == "null" -o "$${version}" == "" ]; then \
+		echo "ERROR: failed to obtain current version for $(VENDOR)/$(PACKAGE_REPO_NAME)"; \
+		exit 1; \
+	else \
+		echo "$${version}" | tee VERSION; \
+	fi
 
 LICENSE:
 	@github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) "license" .license.spdx_id | tr '[:lower:]' '[:upper:]' | tee LICENSE
@@ -111,18 +131,37 @@ init: VERSION LICENSE DESCRIPTION RELEASE
 
 update: CURRENT_VERSION RELEASE
 
+sleep: RATE_LIMIT=0
+sleep:
+	sleep $(RATE_LIMIT)
+
+auto-update:
+	@if [ "$${AUTO_UPDATE_ENABLED:-true}" == "true" ]; then \
+		$(MAKE) --quiet --silent --no-print-directory update; \
+		exit $?; \
+	else \
+		echo "Automatic updates disabled for $${PACKAGE_NAME}"; \
+		exit 0; \
+	fi
+
 # The only way to tell if VERSION is up to date is to query the source via the internet
 .PHONY: CURRENT_VERSION
 
 # Update the VERSION file only if it would change, to avoid triggering unnecessary builds
+CURRENT_VERSION: API=releases/latest
+CURRENT_VERSION: QUERY=.tag_name
 CURRENT_VERSION:
 	@local_version=$$(cat VERSION || echo 0); \
-	current_version=$$(env PATH=$(PATH) github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) "releases/latest" .tag_name | sed 's/^v//'); \
-	if [ "$${local_version}" != "$${current_version}" ]; then \
-		echo Upgrading $(PACKAGE_NAME) from $${local_version} to $${current_version}; \
-		echo $${current_version} > VERSION; \
+	current_version=$$(env PATH=$(PATH) github-repo-metadata $(VENDOR) $(PACKAGE_REPO_NAME) '$(API)' '$(QUERY)' | sed 's/^v//'); \
+	if [ $$? -ne 0 ]; then \
+		exit 1; \
+	elif [ "$${current_version}" == "null" -o -z "$${current_version}" ]; then \
+		echo "ERROR: failed to obtain current version for $(VENDOR)/$(PACKAGE_REPO_NAME) (got: $${current_version})"; \
+		exit 1; \
+	elif [ "$${local_version}" != "$${current_version}" ]; then \
+		echo "Upgrading $(PACKAGE_NAME) from $${local_version} to $${current_version}"; \
+		echo "$${current_version}" > VERSION; \
 	fi
-
 
 info:
 	@printf "%-20s %s\n" "Vendor:" "$(VENDOR)"

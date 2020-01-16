@@ -5,12 +5,13 @@ export DOCKER_IMAGE_NAME ?= $(DOCKER_IMAGE):$(DOCKER_TAG)
 export DOCKER_BUILD_FLAGS = 
 
 export DEFAULT_HELP_TARGET := help/vendor
-export README_DEPS ?= docs/targets.md
+export README_DEPS ?= .github/auto-label.yml docs/targets.md
 
 export DIST_CMD ?= cp -a
 export DIST_PATH ?= /dist
-export INSTALL_PATH ?= /usr/local/bin
-export ALPINE_VERSION ?= 3.10
+export ALPINE_VERSION ?= 3.11
+
+SHELL := /bin/bash
 
 -include $(shell curl -sSL -o .build-harness "https://git.io/build-harness"; echo .build-harness)
 
@@ -20,6 +21,7 @@ deps:
 	@exit 0
 
 ## Create a distribution by coping $PACKAGES from $INSTALL_PATH to $DIST_PATH
+dist: INSTALL_PATH=/usr/local/bin
 dist:
 	mkdir -p $(DIST_PATH)
 	[ -z "$(PACKAGES)" ] || \
@@ -33,6 +35,13 @@ push:
 
 run:
 	docker run -it ${DOCKER_IMAGE_NAME} sh
+
+.github/auto-label.yml:: PACKAGES=$(sort $(dir $(wildcard vendor/*/)))
+.github/auto-label.yml::
+	cp .github/auto-label-default.yml $@
+	for vendor in $(PACKAGES); do \
+		echo "$${vendor%/}: $${vendor}**"; \
+	done >> $@
 
 ## Build alpine packages for testing
 docker/build/apk:
@@ -53,10 +62,10 @@ docker/build/apk/all:
 		-v $$(pwd):/packages cloudposse/apkbuild:$(ALPINE_VERSION) \
 		sh -c "make -C /packages/vendor build"
 
-
 ## Build alpine packages for testing
 docker/build/apk/shell:
-	sudo rm -rf tmp/*
+	rm -rf tmp/*
+	[ -n "$(ls tmp/)" ] && sudo rm -rf tmp/* || true
 	docker build -t cloudposse/apkbuild:$(ALPINE_VERSION) -f apk/Dockerfile-$(ALPINE_VERSION) .
 	docker run \
 		--name apkbuild \

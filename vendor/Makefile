@@ -5,7 +5,7 @@ APK_PACKAGE_REPOS ?= $(addprefix $(APK_PACKAGES_PATH)/,$(REPOS))
 APK_PACKAGE_INDEX ?= $(addsuffix /APKINDEX.tar.gz,$(APK_PACKAGE_REPOS))
 APK_PACKAGES ?= $(wildcard $(addsuffix /*.apk,$(APK_PACKAGE_REPOS)))
 
-export PACKAGER_PRIVKEY ?= $(CURDIR)/../key.rsa
+SHELL := /bin/bash
 
 default: build
 
@@ -23,8 +23,8 @@ $(PACKAGES): prepare
 	make --no-print-directory -C $@ apk
 
 ## Update all packages
-update:
-	find . -mindepth 1 -maxdepth 1 -type d | xargs -I{} make -C {} update
+auto-update:
+	find . -mindepth 1 -maxdepth 1 -type d | xargs -I{} bash -c 'make --no-print-directory --quiet --silent -C {} auto-update || exit 255'
 
 # Rebuild the APKINDEX if it's older than any of the *.apk files
 $(APK_PACKAGE_INDEX): $(APK_PACKAGES)
